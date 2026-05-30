@@ -1,0 +1,67 @@
+networks:
+  attendx-network:
+    driver: bridge
+
+volumes:
+  db_data:
+
+services:
+
+  db:
+    image: mariadb:10.11
+    container_name: attendx-db
+    networks:
+      - attendx-network
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass123
+      MYSQL_DATABASE: attendance
+      MYSQL_USER: attendx
+      MYSQL_PASSWORD: attendx123
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb", "-uattendx", "-pattendx123", "-e", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: attendx-backend
+    networks:
+      - attendx-network
+    environment:
+      DB_URL: jdbc:mariadb://db:3306/attendance
+      DB_USERNAME: attendx
+      DB_PASSWORD: attendx123
+      SERVER_PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend/attendance-frontend
+      dockerfile: Dockerfile
+    container_name: attendx-frontend
+    networks:
+      - attendx-network
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

@@ -1,0 +1,80 @@
+
+# ─────────────────────────────────────────────
+# All three containers run on this network
+# They can reach each other by service name
+# e.g. backend can reach db at "db:3306"
+# ─────────────────────────────────────────────
+networks:
+  attendx-network:
+    driver: bridge
+
+# ─────────────────────────────────────────────
+# Data volume — survives container restarts
+# Stored on your host machine's disk
+# ─────────────────────────────────────────────
+volumes:
+  db_data:
+
+services:
+
+  # ── 1. DATABASE ─────────────────────────────
+  db:
+    image: mariadb:10.11
+    container_name: attendx-db
+    networks:
+      - attendx-network
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass123
+      MYSQL_DATABASE: attendance
+      MYSQL_USER: attendx
+      MYSQL_PASSWORD: attendx123
+    volumes:
+      # Named volume keeps data between restarts
+      - db_data:/var/lib/mysql
+    # Health check — backend waits for this before starting
+    healthcheck:
+      test: ["CMD", "mariadb", "-uattendx", "-pattendx123", "-e", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # ── 2. BACKEND ──────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: attendx-backend
+    networks:
+      - attendx-network
+    environment:
+      # "db" is the service name above — Docker resolves it
+      DB_URL: jdbc:mariadb://db:3306/attendance
+      DB_USERNAME: attendx
+      DB_PASSWORD: attendx123
+      SERVER_PORT: 8080
+    # Only expose internally — frontend Nginx talks to it
+    # Remove "ports" section in production (K8s handles routing)
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        # Wait until db health check passes before starting
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── 3. FRONTEND ─────────────────────────────
+  frontend:
+    build:
+      context: ./frontend/attendance-frontend
+      dockerfile: Dockerfile
+    container_name: attendx-frontend
+    networks:
+      - attendx-network
+    ports:
+      # Only this port is publicly accessible
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
